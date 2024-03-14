@@ -1,136 +1,191 @@
 package com.mashwani.canvaspractice
 
+import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.LinearGradient
+import android.graphics.Matrix
 import android.graphics.Paint
-import android.graphics.PorterDuff
-import android.graphics.PorterDuffColorFilter
+import android.graphics.Path
 import android.graphics.Rect
+import android.graphics.RectF
+import android.graphics.Shader
 import android.text.TextPaint
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
+import android.view.animation.AccelerateDecelerateInterpolator
 import androidx.core.content.ContextCompat
 
-
-data class BottomBarItem(val text: String, val unselectedIconResId: Int, val selectedIconResId: Int)
 
 class BottomBar @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null
 ) : View(context, attrs) {
 
-    companion object {
-        private const val DENSITY_FACTOR = 75
-        private const val CORNER_RADIUS = 30f
-        private const val ICON_SCALING_FACTOR = 0.7f
-        private const val TEXT_SIZE = 35f
-    }
-
-    private val verticalLineHeightFactor: Float = DENSITY_FACTOR * resources.displayMetrics.density
-    private val paint: Paint = Paint().apply {
-        isAntiAlias = true
-    }
-
-    private val textPaint: TextPaint = TextPaint().apply {
-        color = Color.WHITE
-        textSize = TEXT_SIZE
-        textAlign = Paint.Align.CENTER
-//        typeface = ResourcesCompat.getFont(context, R.font.poppins_regular)
-    }
-
-    private var _position = 0
     private val boxRects = mutableListOf<Rect>()
     private val boxItems = mutableListOf<BottomBarItem>()
 
-    init {
-        setOnTouchListener { _, event ->
-            if (event.action == MotionEvent.ACTION_DOWN) {
-                for (i in boxRects.indices) {
-                    if (boxRects[i].contains(event.x.toInt(), event.y.toInt())) {
-                        listener?.onBoxClicked(i)
-                        performClick()
-                        return@setOnTouchListener true
-                    }
+    private val paint = Paint().apply {
+        isAntiAlias = true
+    }
+
+    private val textPaint = TextPaint().apply {
+        color = Color.WHITE
+        textSize = 35f
+        textAlign = Paint.Align.CENTER
+    }
+
+    private val densityFactor = 56 * resources.displayMetrics.density
+
+    private var selectedPosition = 0
+
+    var onItemSelectedListener: ((position: Int) -> Unit)? = null
+
+    private var animator: ValueAnimator? = null
+
+    private var oldRect: Rect = Rect()
+
+    private fun drawTrapezoid(canvas: Canvas, rect: Rect) {
+        val gradient = LinearGradient(
+            rect.centerX().toFloat(), // Start X position (center)
+            rect.bottom.toFloat(),    // Start Y position (bottom)
+            rect.centerX().toFloat(), // End X position (center)
+            rect.top.toFloat(),       // End Y position (top)
+            Color.argb(85, 255, 255, 255), // Start color (semi-transparent white)
+            Color.argb(25, 255, 255, 255), // End color (fully transparent)
+            Shader.TileMode.CLAMP
+        )
+
+        paint.shader = gradient
+        paint.style = Paint.Style.FILL
+
+        val path = Path()
+        path.moveTo(rect.left.toFloat() + (rect.width() * 0.2f), rect.bottom.toFloat() - 10f)
+        path.lineTo(rect.right.toFloat() - (rect.width() * 0.2f), rect.bottom.toFloat() - 10f)
+        path.lineTo(rect.right.toFloat(), rect.top.toFloat())
+        path.lineTo(rect.left.toFloat(), rect.top.toFloat())
+        path.close()
+
+        canvas.drawPath(path, paint)
+
+        paint.shader = null
+    }
+
+    private fun animateIndicatorAndTrapezoid(fromRect: Rect, toRect: Rect) {
+        animator?.cancel()
+
+        animator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 300
+            interpolator = AccelerateDecelerateInterpolator()
+
+            addUpdateListener { animation ->
+                val fraction = animation.animatedFraction
+                val newX = fromRect.left + (toRect.left - fromRect.left) * fraction
+                val newY = fromRect.top + (toRect.top - fromRect.top) * fraction
+                val newWidth = fromRect.width() + (toRect.width() - fromRect.width()) * fraction
+                val newHeight = fromRect.height() + (toRect.height() - fromRect.height()) * fraction
+
+                val newRect = Rect(newX.toInt(), newY.toInt(), (newX + newWidth).toInt(), (newY + newHeight).toInt())
+                oldRect.set(newRect)
+                invalidate()
+            }
+
+            start()
+        }
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (event.action == MotionEvent.ACTION_DOWN) {
+            for (i in boxRects.indices) {
+                if (boxRects[i].contains(event.x.toInt(), event.y.toInt())) {
+                    selectedPosition = i
+                    onItemSelectedListener?.invoke(i)
+                    animateIndicatorAndTrapezoid(oldRect, boxRects[i])
+                    performClick()
+                    return true
                 }
             }
-            false
         }
+        return super.onTouchEvent(event)
     }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        val canvasWidth = width.toFloat()
-        val canvasHeight = height.toFloat()
-
-        drawImaginaryBoxes(canvas)
-    }
-
-    private fun drawImaginaryBoxes(canvas: Canvas) {
-        for (i in boxRects.indices) {
-            val boxRect = boxRects[i]
-            paint.color = Color.BLACK
-            paint.style = Paint.Style.FILL
-            canvas.drawRect(boxRect, paint)
-
-            val centerX = (boxRect.left + boxRect.right) / 2f
-            val centerY = (boxRect.top + boxRect.bottom) / 2f
-
-            // Check if the box is unselected
-//            if (i != position) {
-            // Draw the icon and text for the box
-            ContextCompat.getDrawable(context, boxItems[i].unselectedIconResId)?.apply {
-                val iconWidth = intrinsicWidth * ICON_SCALING_FACTOR
-                val iconHeight = intrinsicHeight * ICON_SCALING_FACTOR
-                colorFilter = PorterDuffColorFilter(Color.WHITE, PorterDuff.Mode.SRC_IN)
-                setBounds(
-                    (centerX - iconWidth / 2).toInt(),
-                    (centerY - iconHeight / 2).toInt(),
-                    (centerX + iconWidth / 2).toInt(),
-                    (centerY + iconHeight / 2).toInt()
-                )
-                draw(canvas)
-            }
-
-            boxItems[i].text.let {
-                canvas.drawText(it, centerX, centerY + 60f, textPaint)
-            }
-//            }
+        boxRects.forEachIndexed { index, boxRect ->
+            drawBox(canvas, boxRect,index ,index == selectedPosition)
         }
     }
 
+    private fun drawBox(canvas: Canvas, rect: Rect, index: Int, isSelected: Boolean) {
+        paint.color = ContextCompat.getColor(context, R.color.bbar_back)
+        canvas.drawRect(rect, paint)
 
-    private var position: Int
-        get() = _position
-        set(value) {
-            _position = value
-            invalidate()
+        val centerX = rect.centerX().toFloat()
+        val centerY = rect.centerY().toFloat()
+
+        val iconResId = if (isSelected) boxItems[index].selectedIconResId else boxItems[index].unselectedIconResId
+        val textColor = ContextCompat.getColor(context, if (isSelected) R.color.bbar_ic_selected else R.color.bbar_ic_unselected)
+
+        drawIcon(canvas, iconResId, centerX, centerY - 25f)
+        drawText(canvas, boxItems[index].text, centerX, centerY + 55f, textColor)
+
+        if (isSelected) {
+            drawIndicator(canvas, oldRect)
+            drawTrapezoid(canvas, oldRect)
         }
-
-    interface OnBoxClickListener {
-        fun onBoxClicked(position: Int)
     }
 
-    private var listener: OnBoxClickListener? = null
+    private fun drawIcon(canvas: Canvas, iconResId: Int, centerX: Float, centerY: Float) {
+        val icon = ContextCompat.getDrawable(context, iconResId) ?: return
+        icon.apply {
+            val scaledWidth = intrinsicWidth.toFloat()
+            val scaledHeight = intrinsicHeight.toFloat()
+            setBounds(
+                (centerX - scaledWidth / 2).toInt(),
+                (centerY - scaledHeight / 2).toInt(),
+                (centerX + scaledWidth / 2).toInt(),
+                (centerY + scaledHeight / 2).toInt()
+            )
+            draw(canvas)
+        }
+    }
 
-    fun setOnBoxClickListener(listener: OnBoxClickListener) {
-        this.listener = listener
+    private fun drawText(canvas: Canvas, text: String, x: Float, y: Float, color: Int) {
+        textPaint.apply {
+            this.color = color
+        }
+        canvas.drawText(text, x, y, textPaint)
+    }
+
+    private fun drawIndicator(canvas: Canvas, rect: Rect) {
+        paint.color = Color.WHITE
+        val indicatorHeight = 10f
+        val indicatorRadius = 15f
+
+        val startX = rect.left.toFloat() + (rect.width() * 0.19f)
+        val endX = rect.right.toFloat() - (rect.width() * 0.19f)
+        val startY = rect.bottom.toFloat() - indicatorHeight
+        val endY = rect.bottom.toFloat()
+
+        val indicatorRect = RectF(startX, startY, endX, endY)
+        canvas.drawRoundRect(indicatorRect, indicatorRadius, indicatorRadius, paint)
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
-        val boxWidth = width / 3
-        val boxHeight = verticalLineHeightFactor.toInt()
-
+        val boxWidth = w / 5
+        val boxHeight = densityFactor.toInt()
         boxRects.clear()
-        for (i in 0 until 3) {
-            val left = (i * (width / 3))
+        for (i in 0 until 5) {
+            val left = i * boxWidth
             val right = left + boxWidth
-            val top = (height - boxHeight)
+            val top = h - boxHeight
             val bottom = top + boxHeight
             boxRects.add(Rect(left, top, right, bottom))
         }
+        oldRect.set(boxRects[0])
     }
 
     fun setBoxItems(items: List<BottomBarItem>) {
@@ -138,5 +193,15 @@ class BottomBar @JvmOverloads constructor(
         boxItems.addAll(items)
         invalidate()
     }
-}
 
+    data class BottomBarItem(
+        val text: String,
+        val selectedIconResId: Int,
+        val unselectedIconResId: Int
+    )
+
+    override fun performClick(): Boolean {
+        super.performClick()
+        return true
+    }
+}
